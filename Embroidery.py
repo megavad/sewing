@@ -1,15 +1,15 @@
 #!/usr/bin/python
-# -*- coding: latin1 -*-
 # $Id$
 #
-# Date:	20-Aug-2015
+# Date:	20-Feb-2018
 
 __author__ = "Vakhramov"
 __email__  = "megavad@mail.ru"
 
 __name__ = "Embroidery"
-__version__= "0.0.1"
+__version__= "0.0.2"
 
+from CNC import CNC,Block
 from ToolsPage import Plugin
 
 try:
@@ -53,35 +53,47 @@ def decode_dy (b0, b1, b2):
 	y+= getbit(b0,7)*(+1)
 	y+= getbit(b0,6)*(-1)
 	return y
+	
+
 options = { 243 : CNC.grapid,#to be changed to zero func
            3 : CNC.gline,#normal stitch
            131 : CNC.grapid,# to jump - is not visible 
-           195 : CNC.grapid,#to be changed to stop func
+           195 : CNC.grapid#Change COLOR! and nothing else, in decode_flags
 }	
 
-def decode_flags ( b2) :
-	if b2==243: return END
-	return options[b2&195] 
+colors = {0:"red", 
+		  1:"green", 
+		  2:"blue", 
+		  3:"yellow",
+		  4:"gray",
+		  5:"brown",
+		  6:"cyan",
+		  7:"magenta"}
+
+
 
 
 #==============================================================================
 # Embroidery generates stitches at 2D
 #==============================================================================
 class Embroidery:
-	def __init__(self, name):
+	
+	def __init__(self, name="Embroidery",color = 0):
 		self.name = name
+		self.color = color
 		#-----------------------
 
 
-	def GetStitches(self, app):
+	def GetStitches(self, app, FileName ):
 		try:
 			from struct import *
 		except:
 			app.setStatus("Embroidery abort: no module named struct")
 			return
-		fileName = "/src/J128-8.dst"#self["File"]
+		
+		print(FileName)
 		try:
-			f = open(fileName,'rb')
+			f = open(FileName,'rb')
 		except:
 			app.setStatus(" Embroidery abort: Can't read image file")
 			return
@@ -95,55 +107,36 @@ class Embroidery:
 		
 		if (LAN !='LA:'): 
 			app.setStatus(" Embroidery abort: Not a DST")
-		app.setStatus(" St count: %d color changes=%d"%(ST ,CL))
+		print (LA)
+		print(" St count: %d color changes=%d"%(ST ,CL))
 		f.seek(512);
-		#newWidth = iWidth
-		#newHeight = iHeight
-		#points = []
-		#points.append()
-		blocks = []
-		block = Block(self.name)
-		#block = Block("%s-Embroidery stitches"%(self.name))
-		#block.append("(  Location: %g,%g )"%(3,4))
-		#block.append(CNC.grapid(first.x(), first.y()))
-		
-		#-------------------------------
-		#here will be point calculation
-		#-------------------------------
 		coordX=0;coordY=0;#initial coordinates to start sewing
 		cnt=0;#just counter
+		color = 0;#color code
 		format="1b1b1b"# 3 unsigned bytes from data field
-		
-		
-		
-		
-		#app.setStatus("Data 0 1 2 =: %d %d %d"%(b0,b1,b2))#debug message with bytes
+		prevCol=self.color
+		i=0
+		blocks = []
+		for ColorCycles  in range (0 , CL+1): #color cycles
+			
+			block = Block(self.name)
+			while prevCol==self.color:
+				ff=f.read(3);#read 24 bits
+				cnt+=1
+				if  len(ff)<3: break
+				b0,b1,b2=unpack(format, ff) #data field unpacked with "format" to b0 b1 b2
+				dx = decode_dx(b0, b1, b2)
+				dy = decode_dy(b0, b1, b2)
+				coordX+=dx
+				coordY+=dy
+				block.color = colors[self.color]
+				block.append(self.decode_flags( b2)(coordX,coordY))
+				block.append(CNC.zsafe())#safe height
+			prevCol = self.color
+			print("Stitches read=: %d"%cnt)#counter		
+			blocks.append(block)
 
-		#app.setStatus("Data dx dy=: %d %d"%(dx, dy))#debug message with bits	
-		while True:
-			ff=f.read(3);#read 24 bits
-			cnt+=1
-			if  len(ff)<3: break
-			b0,b1,b2=unpack(format, ff) #data field unpacked with "format" to b0 b1 b2
-			cnt+=1
-			dx = decode_dx(b0, b1, b2)
-			dy = decode_dy(b0, b1, b2)
-			coordX+=dx
-			coordY+=dy
-			block.append(decode_flags(b2)(coordX,coordY))
-			block.append(CNC.zsafe())#safe height
-
-		app.setStatus("Stitches read=: %d"%cnt)#counter		
-		#block.append(CNC.zenter(10.0))
 		
-		#block.append(CNC.gline(10, 20, 0))
-		#block.append(CNC.gline(50, 40, 1))	
-		#block.append(CNC.zsafe())#safe height
-		blocks.append(block)
-		pos = Vector(19, 100, 0)
-		#block.append(block.append(CNC.gcode(0, zip("XY",pos[:2]))))
-		block.append(CNC.glinev(1, pos, 430))	
-		blocks.append(block)
 		try:
 			dx = float(self["dx"])
 		except:
@@ -154,38 +147,25 @@ class Embroidery:
 		except:
 			dy = 0.0
 
-		#pos = blocks[-1]	# insert position
-
-		#undoinfo = []
-		
-#				undoinfo = []	# FIXME it should be only one UNDO#
-#				newblocks = []
-#				for bid in blocks:
-#					undoinfo.append(app.gcode.cloneBlockUndo(bid, pos))
-#					newblocks.append((pos,None))
-#					pos += 1
-#				app.addUndo(undoinfo)
-#
-#				# FIXME but the moveLines already does the addUndo
-#				# I should correct it
-		#app.gcode.moveLines(newblocks, 10, 20)
-
-		
 		return blocks
+	def decode_flags (self, b2) :
+		if b2==243: return END
+		if b2&195==195: 
+			self.color = self.color+1
+		return options[b2&195] 
 		#================
-		
-		
-		
+
 		
 class Tool(Plugin):
-	"""Generate replicas of selected"""
+	__doc__ = _("Embroidery abstract")
 	def __init__(self, master):
-		Plugin.__init__(self, master)
+		Plugin.__init__(self, master,"Embroidery")
 		self.name = "Embroidery"
 		self.icon = "tile"
+		self.group= "CAM"
 		self.variables = [
 			("name",      "db",    "", "Name"),
-			("File",     "file",  "", "DST Tajima file"),
+			("FileName",     "file",  "", "DST Tajima file"),
 			("FeedMin"  ,  "int" ,     250, "Minimum feed"),
 			("FeedMax"  ,  "int" ,    5000, "Maximum feed"),
 			("LA",        "LA",  "", "name"),
@@ -202,41 +182,32 @@ class Tool(Plugin):
 		
 		feedMax = self["FeedMax"]
 		self.buttons.append("exe")
-		#self.buttons.append("Open Design")
-
-
-	
 
 
 	# ----------------------------------------------------------------------
 	def execute(self, app):
 		# Select all code in editor
 		n = self["name"]
+		FileName = self["FileName"]
+		print (FileName)
+		print ("aaa")
 		if not n or n=="default": n="Embroidery"
 		embroidery = Embroidery(n)
-		blocks = embroidery.GetStitches(app)
+		blocks = embroidery.GetStitches(app, FileName)
 
 		active = app.activeBlock()
 		app.gcode.insBlocks(active, blocks, "Create EMB")
 		#		if len(blocks) > 0:
 		app.refresh()
-		#app.setStatus("Generated: EMB")
-		#app.editor.selectAll()
-		#blocks = app.editor.getSelectedBlocks()
 
-		#if  blocks:
-	#		tkMessageBox.showerror("g code!",
-#				"No g-code should be in editor")
-#			return
-		
-		
 
-		
-		#if feedMin <=0 or feedMax <=0 :
-		#	app.setStatus("Embroidery abort: Please check feed rate parameters")
-	#		return
 
-		#divisions
-	#no	divisions = maxSize / toolSize
+#some old stuff
+		#self.buttons.append("Open Design")
+		#pos = Vector(19, 100, 0)
+		#block.append(block.append(CNC.gcode(0, zip("XY",pos[:2]))))
+		#block.append(CNC.glinev(1, pos, 430))	
+		#app.setStatus("Data 0 1 2 =: %d %d %d"%(b0,b1,b2))#debug message with bytes
+		#app.setStatus("Data dx dy=: %d %d"%(dx, dy))#debug message with bits	
 
 		
